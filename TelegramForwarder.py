@@ -2,6 +2,8 @@ import time
 import asyncio
 from telethon.sync import TelegramClient
 from telethon import errors
+from dotenv import load_dotenv
+import os
 
 class TelegramForwarder:
     def __init__(self, api_id, api_hash, phone_number):
@@ -49,28 +51,50 @@ class TelegramForwarder:
             messages = await self.client.get_messages(source_chat_id, min_id=last_message_id, limit=None)
 
             for message in reversed(messages):
-                # Check if the message text includes any of the keywords
-                if keywords:
-                    if message.text and any(keyword in message.text.lower() for keyword in keywords):
-                        print(f"Message contains a keyword: {message.text}")
+                try:
+                    # Check if the message text includes any of the keywords
+                    if keywords:
+                        if message.text and any(keyword in message.text.lower() for keyword in keywords):
+                            print(f"Message contains a keyword: {message.text}")
+                            await self._handle_message_forward(message, destination_channel_id)
+                    else:
+                        await self._handle_message_forward(message, destination_channel_id)
 
-                        # Forward the message to the destination channel
-                        await self.client.send_message(destination_channel_id, message.text)
-
-                        print("Message forwarded")
-                else:
-                        # Forward the message to the destination channel
-                        await self.client.send_message(destination_channel_id, message.text)
-
-                        print("Message forwarded")
-
-
-                # Update the last message ID
-                last_message_id = max(last_message_id, message.id)
+                    # Update the last message ID
+                    last_message_id = max(last_message_id, message.id)
+                except Exception as e:
+                    print(f"Error processing message: {str(e)}")
+                    continue
 
             # Add a delay before checking for new messages again
             await asyncio.sleep(5)  # Adjust the delay time as needed
 
+    async def _handle_message_forward(self, message, destination_channel_id):
+        try:
+            # 下載並重新上傳媒體檔案
+            if message.media:
+                print(f"Processing media message...")
+                # 下載媒體檔案
+                media_path = await self.client.download_media(message.media)
+                if media_path:
+                    print(f"Media downloaded to: {media_path}")
+                    # 重新上傳媒體檔案
+                    await self.client.send_file(
+                        destination_channel_id,
+                        media_path,
+                        caption=message.text if message.text else None
+                    )
+                    # 刪除下載的檔案
+                    os.remove(media_path)
+                    print("Media forwarded successfully")
+            else:
+                # 純文字訊息直接轉發
+                if message.text:
+                    await self.client.send_message(destination_channel_id, message.text)
+                    print("Text message forwarded")
+        except Exception as e:
+            print(f"Error in _handle_message_forward: {str(e)}")
+            raise
 
 # Function to read credentials from file
 def read_credentials():
@@ -93,6 +117,9 @@ def write_credentials(api_id, api_hash, phone_number):
         file.write(phone_number + "\n")
 
 async def main():
+    # 載入環境變數
+    load_dotenv()
+    
     # Attempt to read credentials from file
     api_id, api_hash, phone_number = read_credentials()
 
@@ -109,6 +136,7 @@ async def main():
     print("Choose an option:")
     print("1. List Chats")
     print("2. Forward Messages")
+    print("3. Forward Messages with Fixed IDs")
     
     choice = input("Enter your choice: ")
     
@@ -121,6 +149,17 @@ async def main():
         keywords = input("Put keywords (comma separated if multiple, or leave blank): ").split(",")
         
         await forwarder.forward_messages_to_channel(source_chat_id, destination_channel_id, keywords)
+    elif choice == "3":
+        # 從環境變數讀取固定的聊天 ID
+        source_chat_id = int(os.getenv('SOURCE_CHAT_ID'))
+        destination_channel_id = int(os.getenv('DESTINATION_CHAT_ID'))
+        
+        print(f"Use Read Environment Variable ID：")
+        print(f"Source ID: {source_chat_id}")
+        print(f"Destination ID: {destination_channel_id}")
+        
+        # 直接轉發所有訊息，不使用關鍵字過濾
+        await forwarder.forward_messages_to_channel(source_chat_id, destination_channel_id, [])
     else:
         print("Invalid choice")
 
